@@ -120,6 +120,17 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 
+def admin_only(update):
+    """
+    Returns True only if the update comes from the configured admin.
+    Used to gate admin-only handlers (admin_media, admin_text,
+    panel_command, emojis_command). This was called throughout the
+    original file but never defined, causing a NameError crash.
+    """
+    user = update.effective_user
+    return bool(user and is_admin(user.id))
+
+
 def save_user(user):
     if not user:
         return
