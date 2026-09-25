@@ -18,37 +18,71 @@ from telegram.ext import (
     filters,
 )
 
+
 # =========================================================
 # CONFIG
 # =========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "PASTE_BOT_TOKEN_HERE")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    "PASTE_BOT_TOKEN_HERE"
+)
+
+ADMIN_ID = int(
+    os.getenv(
+        "ADMIN_ID",
+        "123456789"
+    )
+)
 
 DB = "bot.db"
+
 
 # =========================================================
 # DATABASE
 # =========================================================
 
-db = sqlite3.connect(DB, check_same_thread=False)
+db = sqlite3.connect(
+    DB,
+    check_same_thread=False
+)
+
 db.row_factory = sqlite3.Row
 
 
 def db_exec(query, params=()):
+
     cur = db.cursor()
-    cur.execute(query, params)
+
+    cur.execute(
+        query,
+        params
+    )
+
     db.commit()
+
     return cur
 
 
 def db_one(query, params=()):
-    return db_exec(query, params).fetchone()
+
+    return db_exec(
+        query,
+        params
+    ).fetchone()
 
 
 def db_all(query, params=()):
-    return db_exec(query, params).fetchall()
 
+    return db_exec(
+        query,
+        params
+    ).fetchall()
+
+
+# =========================================================
+# TABLES
+# =========================================================
 
 db_exec("""
 CREATE TABLE IF NOT EXISTS settings (
@@ -57,6 +91,7 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 """)
 
+
 db_exec("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -64,6 +99,7 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT
 )
 """)
+
 
 db_exec("""
 CREATE TABLE IF NOT EXISTS pending_requests (
@@ -74,6 +110,7 @@ CREATE TABLE IF NOT EXISTS pending_requests (
 )
 """)
 
+
 db_exec("""
 CREATE TABLE IF NOT EXISTS emojis (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +118,7 @@ CREATE TABLE IF NOT EXISTS emojis (
     emoji TEXT DEFAULT '✨'
 )
 """)
+
 
 db_exec("""
 CREATE TABLE IF NOT EXISTS start_parts (
@@ -93,34 +131,87 @@ CREATE TABLE IF NOT EXISTS start_parts (
 )
 """)
 
-# NEW: Buttons for every individual start part
+
 db_exec("""
 CREATE TABLE IF NOT EXISTS start_buttons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     part_position INTEGER NOT NULL,
     button_position INTEGER NOT NULL,
     button_text TEXT NOT NULL,
-    button_url TEXT NOT NULL
+    button_url TEXT NOT NULL,
+    icon_custom_emoji_id TEXT,
+    button_style TEXT DEFAULT 'primary'
 )
 """)
+
+
+# =========================================================
+# DATABASE MIGRATION
+# =========================================================
+
+try:
+
+    db_exec("""
+    ALTER TABLE start_buttons
+    ADD COLUMN icon_custom_emoji_id TEXT
+    """)
+
+except sqlite3.OperationalError:
+    pass
+
+
+try:
+
+    db_exec("""
+    ALTER TABLE start_buttons
+    ADD COLUMN button_style TEXT DEFAULT 'primary'
+    """)
+
+except sqlite3.OperationalError:
+    pass
 
 
 # =========================================================
 # SETTINGS
 # =========================================================
 
-def get_setting(key, default=""):
+def get_setting(
+    key,
+    default=""
+):
+
     row = db_one(
-        "SELECT value FROM settings WHERE key=?",
+        """
+        SELECT value
+        FROM settings
+        WHERE key=?
+        """,
         (key,)
     )
-    return row["value"] if row else default
+
+    if row:
+        return row["value"]
+
+    return default
 
 
-def set_setting(key, value):
+def set_setting(
+    key,
+    value
+):
+
     db_exec(
-        "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
-        (key, str(value))
+        """
+        INSERT OR REPLACE INTO settings(
+            key,
+            value
+        )
+        VALUES(?,?)
+        """,
+        (
+            key,
+            str(value)
+        )
     )
 
 
@@ -129,15 +220,22 @@ def set_setting(key, value):
 # =========================================================
 
 def is_admin(user_id):
+
     return user_id == ADMIN_ID
 
 
 def admin_only(update):
+
     user = update.effective_user
-    return bool(user and is_admin(user.id))
+
+    return bool(
+        user and
+        is_admin(user.id)
+    )
 
 
 def save_user(user):
+
     if not user:
         return
 
@@ -162,7 +260,11 @@ def save_user(user):
 # PREMIUM EMOJI
 # =========================================================
 
-def save_emoji_id(emoji_id, emoji="✨"):
+def save_emoji_id(
+    emoji_id,
+    emoji="✨"
+):
+
     if not emoji_id:
         return
 
@@ -174,35 +276,48 @@ def save_emoji_id(emoji_id, emoji="✨"):
         )
         VALUES(?,?)
         """,
-        (emoji_id, emoji)
+        (
+            emoji_id,
+            emoji
+        )
     )
 
 
 def get_emojis():
+
     return db_all(
-        "SELECT * FROM emojis ORDER BY id ASC"
+        """
+        SELECT *
+        FROM emojis
+        ORDER BY id ASC
+        """
     )
 
 
-def premium_emoji(emoji_id, fallback="✨"):
-    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+def premium_emoji(
+    emoji_id,
+    fallback="✨"
+):
+
+    return (
+        f'<tg-emoji emoji-id="{emoji_id}">'
+        f'{fallback}'
+        f'</tg-emoji>'
+    )
 
 
 def build_emoji_text(text):
-    """
-    Converts:
-        {emoji:1}
-
-    into:
-        Telegram premium/custom emoji HTML.
-    """
 
     if not text:
         return text
 
     for row in get_emojis():
 
-        tag = "{emoji:" + str(row["id"]) + "}"
+        tag = (
+            "{emoji:"
+            + str(row["id"])
+            + "}"
+        )
 
         if tag in text:
 
@@ -222,6 +337,7 @@ def build_emoji_text(text):
 # =========================================================
 
 def get_start_parts():
+
     return db_all(
         """
         SELECT *
@@ -231,7 +347,10 @@ def get_start_parts():
     )
 
 
-def get_start_part(position):
+def get_start_part(
+    position
+):
+
     return db_one(
         """
         SELECT *
@@ -250,10 +369,15 @@ def add_start_part(
 ):
 
     row = db_one(
-        "SELECT MAX(position) AS maxpos FROM start_parts"
+        """
+        SELECT MAX(position) AS maxpos
+        FROM start_parts
+        """
     )
 
-    next_pos = (row["maxpos"] or 0) + 1
+    next_pos = (
+        row["maxpos"] or 0
+    ) + 1
 
     db_exec(
         """
@@ -293,7 +417,9 @@ def clear_start_parts():
 # BUTTON FUNCTIONS
 # =========================================================
 
-def get_part_buttons(part_position):
+def get_part_buttons(
+    part_position
+):
 
     return db_all(
         """
@@ -309,7 +435,9 @@ def get_part_buttons(part_position):
 def add_part_button(
     part_position,
     button_text,
-    button_url
+    button_url,
+    icon_custom_emoji_id=None,
+    button_style="primary"
 ):
 
     row = db_one(
@@ -321,7 +449,9 @@ def add_part_button(
         (part_position,)
     )
 
-    next_position = (row["maxpos"] or 0) + 1
+    next_position = (
+        row["maxpos"] or 0
+    ) + 1
 
     db_exec(
         """
@@ -329,20 +459,26 @@ def add_part_button(
             part_position,
             button_position,
             button_text,
-            button_url
+            button_url,
+            icon_custom_emoji_id,
+            button_style
         )
-        VALUES(?,?,?,?)
+        VALUES(?,?,?,?,?,?)
         """,
         (
             part_position,
             next_position,
             button_text,
-            button_url
+            button_url,
+            icon_custom_emoji_id,
+            button_style
         )
     )
 
 
-def build_part_keyboard(part_position):
+def build_part_keyboard(
+    part_position
+):
 
     buttons = get_part_buttons(
         part_position
@@ -353,16 +489,43 @@ def build_part_keyboard(part_position):
 
     keyboard = []
 
-    # IMPORTANT:
-    # Every button is a separate row.
-    # So buttons appear vertically.
     for button in buttons:
 
-        keyboard.append([
-            InlineKeyboardButton(
+        kwargs = {
+
+            "text":
                 button["button_text"],
-                url=button["button_url"]
+
+            "url":
+                button["button_url"]
+
+        }
+
+        emoji_id = (
+            button["icon_custom_emoji_id"]
+        )
+
+        if emoji_id:
+
+            kwargs[
+                "icon_custom_emoji_id"
+            ] = emoji_id
+
+        style = (
+            button["button_style"]
+            or "primary"
+        )
+
+        kwargs[
+            "style"
+        ] = style
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+                **kwargs
             )
+
         ])
 
     return InlineKeyboardMarkup(
@@ -378,12 +541,17 @@ def is_valid_url(url):
             url.strip()
         )
 
-        return parsed.scheme in (
-            "http",
-            "https"
-        ) and bool(parsed.netloc)
+        return (
+            parsed.scheme in (
+                "http",
+                "https"
+            )
+            and
+            bool(parsed.netloc)
+        )
 
     except Exception:
+
         return False
 
 
@@ -401,21 +569,30 @@ async def send_start_sequence(
     if not parts:
         return False
 
-    last_index = len(parts) - 1
+    last_index = (
+        len(parts) - 1
+    )
 
     for i, part in enumerate(parts):
 
         position = part["position"]
 
-        media_type = part["media_type"]
-        media_id = part["media_id"]
+        media_type = (
+            part["media_type"]
+        )
+
+        media_id = (
+            part["media_id"]
+        )
 
         caption = build_emoji_text(
             part["caption"] or ""
         ) or None
 
-        reply_markup = build_part_keyboard(
-            position
+        reply_markup = (
+            build_part_keyboard(
+                position
+            )
         )
 
         try:
@@ -423,62 +600,80 @@ async def send_start_sequence(
             if media_type == "video":
 
                 await bot.send_video(
+
                     chat_id=chat_id,
                     video=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
+
                 )
+
 
             elif media_type == "photo":
 
                 await bot.send_photo(
+
                     chat_id=chat_id,
                     photo=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
+
                 )
+
 
             elif media_type == "document":
 
                 await bot.send_document(
+
                     chat_id=chat_id,
                     document=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
+
                 )
+
 
             elif media_type == "animation":
 
                 await bot.send_animation(
+
                     chat_id=chat_id,
                     animation=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
+
                 )
+
 
             elif media_type == "audio":
 
                 await bot.send_audio(
+
                     chat_id=chat_id,
                     audio=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
+
                 )
+
 
             elif media_type == "voice":
 
                 await bot.send_voice(
+
                     chat_id=chat_id,
                     voice=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
+
                 )
+
 
             else:
 
@@ -489,16 +684,18 @@ async def send_start_sequence(
                 if part_text:
 
                     await bot.send_message(
+
                         chat_id=chat_id,
                         text=part_text,
                         parse_mode=ParseMode.HTML,
                         reply_markup=reply_markup
+
                     )
 
         except Exception as e:
 
             print(
-                f"Error sending part "
+                f"Error sending Part "
                 f"{position}: {e}"
             )
 
@@ -545,7 +742,7 @@ def admin_panel():
                 "✨ Premium Emoji",
                 callback_data="premium_menu"
             )
-        ],
+        ]
 
     ]
 
@@ -567,17 +764,27 @@ async def show_panel(
         await q.answer()
 
         await q.edit_message_text(
-            text or "⚙️ <b>Admin Panel</b>",
+
+            text or
+            "⚙️ <b>Admin Panel</b>",
+
             parse_mode=ParseMode.HTML,
+
             reply_markup=admin_panel()
+
         )
 
     else:
 
         await update.message.reply_text(
-            text or "⚙️ <b>Admin Panel</b>",
+
+            text or
+            "⚙️ <b>Admin Panel</b>",
+
             parse_mode=ParseMode.HTML,
+
             reply_markup=admin_panel()
+
         )
 
 
@@ -614,44 +821,55 @@ def premium_menu_text_and_keyboard():
         f"<b>{save_text}</b>\n\n"
 
         "Save Mode ON karo.\n"
-        "Phir koi Premium Emoji wala message "
-        "bot ko bhejo.\n\n"
 
-        "Bot uski ID save karke "
-        "use karne ka tag dega:\n"
+        "Phir Premium Emoji wala "
+        "message bot ko bhejo.\n\n"
 
-        "<code>{emoji:1}</code>"
+        "Bot tag dega:\n"
+
+        "<code>{emoji:1}</code>\n\n"
+
+        "Button ke liye bhi Premium "
+        "Emoji ID use kar sakte ho."
 
     )
 
     keyboard = InlineKeyboardMarkup([
 
         [
+
             InlineKeyboardButton(
                 "💾 Toggle Save Mode",
                 callback_data="toggle_save"
             )
+
         ],
 
         [
+
             InlineKeyboardButton(
                 "👀 View Emojis & IDs",
                 callback_data="view_emojis"
             )
+
         ],
 
         [
+
             InlineKeyboardButton(
                 "🗑 Clear All Emojis",
                 callback_data="clear_emojis"
             )
+
         ],
 
         [
+
             InlineKeyboardButton(
                 "⬅️ Back",
                 callback_data="back_panel"
             )
+
         ]
 
     ])
@@ -668,30 +886,42 @@ async def start(
     context
 ):
 
-    user = update.effective_user
+    user = (
+        update.effective_user
+    )
 
     save_user(user)
 
     if is_admin(user.id):
 
         await update.message.reply_text(
+
             "⚙️ <b>Admin Panel</b>",
+
             parse_mode=ParseMode.HTML,
+
             reply_markup=admin_panel()
+
         )
 
         return
 
     sent = await send_start_sequence(
+
         context.bot,
+
         update.effective_chat.id
+
     )
 
     if not sent:
 
         await update.message.reply_text(
+
             "👋 <b>Welcome!</b>",
+
             parse_mode=ParseMode.HTML
+
         )
 
 
@@ -704,13 +934,18 @@ async def join_request(
     context
 ):
 
-    request = update.chat_join_request
+    request = (
+        update.chat_join_request
+    )
 
-    user = request.from_user
+    user = (
+        request.from_user
+    )
 
     save_user(user)
 
     db_exec(
+
         """
         INSERT OR REPLACE INTO pending_requests(
             user_id,
@@ -720,27 +955,36 @@ async def join_request(
         )
         VALUES(?,?,?,?)
         """,
+
         (
             user.id,
             request.chat.id,
             user.username or "",
             user.first_name or ""
         )
+
     )
 
     try:
 
         sent = await send_start_sequence(
+
             context.bot,
+
             user.id
+
         )
 
         if not sent:
 
             await context.bot.send_message(
+
                 chat_id=user.id,
+
                 text="👋 <b>Welcome!</b>",
+
                 parse_mode=ParseMode.HTML
+
             )
 
     except Exception as e:
@@ -766,13 +1010,17 @@ async def callbacks(
     ):
 
         await q.answer(
+
             "Not allowed.",
+
             show_alert=True
+
         )
 
         return
 
     data = q.data
+
 
     # =====================================================
     # BROADCAST
@@ -796,9 +1044,11 @@ async def callbacks(
             "Use /cancel to cancel.",
 
             parse_mode=ParseMode.HTML
+
         )
 
         return
+
 
     # =====================================================
     # APPROVE ALL
@@ -817,8 +1067,11 @@ async def callbacks(
             try:
 
                 await context.bot.approve_chat_join_request(
+
                     chat_id=r["chat_id"],
+
                     user_id=r["user_id"]
+
                 )
 
                 approved += 1
@@ -830,11 +1083,16 @@ async def callbacks(
                 )
 
             db_exec(
+
                 """
                 DELETE FROM pending_requests
                 WHERE user_id=?
                 """,
-                (r["user_id"],)
+
+                (
+                    r["user_id"],
+                )
+
             )
 
             await asyncio.sleep(
@@ -842,11 +1100,15 @@ async def callbacks(
             )
 
         await q.answer(
+
             f"{approved} requests approved.",
+
             show_alert=True
+
         )
 
         return
+
 
     # =====================================================
     # EDIT START
@@ -873,52 +1135,64 @@ async def callbacks(
             "Text, video, file etc. "
             "ek-ek karke add kar sakte ho.\n\n"
 
-            "Buttons bhi kisi bhi Part ke niche "
-            "alag se add kar sakte ho.",
+            "Buttons kisi bhi Part ke "
+            "niche add kar sakte ho.",
 
             parse_mode=ParseMode.HTML,
 
             reply_markup=InlineKeyboardMarkup([
 
                 [
+
                     InlineKeyboardButton(
                         "➕ Add Part",
                         callback_data="add_start_part"
                     )
+
                 ],
 
                 [
+
                     InlineKeyboardButton(
                         "🔘 Add Button",
                         callback_data="add_button"
                     )
+
                 ],
 
                 [
+
                     InlineKeyboardButton(
                         "👀 View Parts",
                         callback_data="view_start_parts"
                     )
+
                 ],
 
                 [
+
                     InlineKeyboardButton(
                         "🗑 Clear All Parts",
                         callback_data="clear_start_parts"
                     )
+
                 ],
 
                 [
+
                     InlineKeyboardButton(
                         "⬅️ Back",
                         callback_data="back_panel"
                     )
+
                 ]
 
             ])
+
         )
 
         return
+
 
     # =====================================================
     # ADD PART
@@ -937,6 +1211,7 @@ async def callbacks(
             "➕ <b>Add /start Part</b>\n\n"
 
             "Ab message bhejo:\n"
+
             "🎥 Video\n"
             "🖼 Photo\n"
             "📁 File\n"
@@ -954,9 +1229,11 @@ async def callbacks(
             "<code>/cancel</code>",
 
             parse_mode=ParseMode.HTML
+
         )
 
         return
+
 
     # =====================================================
     # ADD BUTTON
@@ -969,8 +1246,11 @@ async def callbacks(
         if not parts:
 
             await q.answer(
+
                 "Pehle kam se kam 1 Part add karo.",
+
                 show_alert=True
+
             )
 
             return
@@ -982,10 +1262,16 @@ async def callbacks(
             keyboard.append([
 
                 InlineKeyboardButton(
+
                     f"📦 Part #{p['position']}",
+
                     callback_data=(
-                        f"button_part_{p['position']}"
+
+                        f"button_part_"
+                        f"{p['position']}"
+
                     )
+
                 )
 
             ])
@@ -993,8 +1279,11 @@ async def callbacks(
         keyboard.append([
 
             InlineKeyboardButton(
+
                 "⬅️ Back",
+
                 callback_data="edit_start"
+
             )
 
         ])
@@ -1003,17 +1292,19 @@ async def callbacks(
 
             "🔘 <b>Select Part</b>\n\n"
 
-            "Jis Part ke niche button lagana hai "
-            "wo select karo:",
+            "Jis Part ke niche button "
+            "lagana hai wo select karo:",
 
             parse_mode=ParseMode.HTML,
 
             reply_markup=InlineKeyboardMarkup(
                 keyboard
             )
+
         )
 
         return
+
 
     # =====================================================
     # SELECT BUTTON PART
@@ -1026,17 +1317,22 @@ async def callbacks(
         try:
 
             part_position = int(
+
                 data.replace(
                     "button_part_",
                     ""
                 )
+
             )
 
         except ValueError:
 
             await q.answer(
+
                 "Invalid Part.",
+
                 show_alert=True
+
             )
 
             return
@@ -1048,8 +1344,11 @@ async def callbacks(
         if not part:
 
             await q.answer(
+
                 "Part not found.",
+
                 show_alert=True
+
             )
 
             return
@@ -1068,15 +1367,17 @@ async def callbacks(
 
             f"🔘 <b>Part #{part_position}</b>\n\n"
 
-            "Ab button ka naam bhejo.\n\n"
+            "Button ka naam bhejo.\n\n"
 
             "Example:\n"
             "<code>REGISTER NOW</code>",
 
             parse_mode=ParseMode.HTML
+
         )
 
         return
+
 
     # =====================================================
     # VIEW START PARTS
@@ -1102,31 +1403,58 @@ async def callbacks(
 
                 position = p["position"]
 
-                if p["media_type"]:
+                label = (
 
-                    label = (
-                        p["media_type"]
-                    )
+                    p["media_type"]
 
-                else:
+                    if p["media_type"]
 
-                    label = "text"
+                    else
 
-                buttons = get_part_buttons(
-                    position
+                    "text"
+
                 )
 
                 lines.append(
+
                     f"📦 <b>Part #{position}</b> "
                     f"— {label}"
+
+                )
+
+                buttons = get_part_buttons(
+                    position
                 )
 
                 if buttons:
 
                     for b in buttons:
 
+                        style = (
+                            b["button_style"]
+                            or "primary"
+                        )
+
+                        emoji_status = (
+
+                            "✨"
+
+                            if b[
+                                "icon_custom_emoji_id"
+                            ]
+
+                            else
+
+                            "▫️"
+
+                        )
+
                         lines.append(
-                            f"   🔘 {b['button_text']}"
+
+                            f"   {emoji_status} "
+                            f"🔘 {b['button_text']} "
+                            f"[{style}]"
+
                         )
 
                 lines.append("")
@@ -1144,23 +1472,29 @@ async def callbacks(
             reply_markup=InlineKeyboardMarkup([
 
                 [
+
                     InlineKeyboardButton(
                         "🔘 Add Button",
                         callback_data="add_button"
                     )
+
                 ],
 
                 [
+
                     InlineKeyboardButton(
                         "⬅️ Back",
                         callback_data="edit_start"
                     )
+
                 ]
 
             ])
+
         )
 
         return
+
 
     # =====================================================
     # CLEAR START PARTS
@@ -1171,8 +1505,11 @@ async def callbacks(
         clear_start_parts()
 
         await q.answer(
+
             "All Parts + Buttons cleared ✅",
+
             show_alert=True
+
         )
 
         await show_panel(
@@ -1181,6 +1518,7 @@ async def callbacks(
         )
 
         return
+
 
     # =====================================================
     # PREMIUM MENU
@@ -1193,12 +1531,17 @@ async def callbacks(
         )
 
         await q.edit_message_text(
+
             text,
+
             parse_mode=ParseMode.HTML,
+
             reply_markup=keyboard
+
         )
 
         return
+
 
     # =====================================================
     # TOGGLE SAVE
@@ -1212,10 +1555,14 @@ async def callbacks(
         )
 
         set_setting(
+
             "save_mode",
+
             "0"
             if current == "1"
-            else "1"
+            else
+            "1"
+
         )
 
         text, keyboard = (
@@ -1223,12 +1570,17 @@ async def callbacks(
         )
 
         await q.edit_message_text(
+
             text,
+
             parse_mode=ParseMode.HTML,
+
             reply_markup=keyboard
+
         )
 
         return
+
 
     # =====================================================
     # VIEW EMOJIS
@@ -1254,10 +1606,16 @@ async def callbacks(
 
                 lines.append(
 
-                    f"{premium_emoji(e['emoji_id'], e['emoji'])} "
+                    f"{premium_emoji("
+                    f"e['emoji_id'],"
+                    f"e['emoji']"
+                    f")}\n"
+
+                    f"🏷️ Tag: "
                     f"<code>{{emoji:{e['id']}}}</code>\n"
 
-                    f"ID: <code>{e['emoji_id']}</code>\n"
+                    f"🆔 ID: "
+                    f"<code>{e['emoji_id']}</code>\n"
 
                 )
 
@@ -1274,16 +1632,20 @@ async def callbacks(
             reply_markup=InlineKeyboardMarkup([
 
                 [
+
                     InlineKeyboardButton(
                         "⬅️ Back",
                         callback_data="premium_menu"
                     )
+
                 ]
 
             ])
+
         )
 
         return
+
 
     # =====================================================
     # CLEAR EMOJIS
@@ -1296,8 +1658,11 @@ async def callbacks(
         )
 
         await q.answer(
+
             "All emoji IDs cleared ✅",
+
             show_alert=True
+
         )
 
         await show_panel(
@@ -1306,6 +1671,7 @@ async def callbacks(
         )
 
         return
+
 
     # =====================================================
     # BACK
@@ -1350,58 +1716,88 @@ async def admin_media(
     if message.video:
 
         media_type = "video"
-        media_id = message.video.file_id
+
+        media_id = (
+            message.video.file_id
+        )
 
     elif message.photo:
 
         media_type = "photo"
-        media_id = message.photo[-1].file_id
+
+        media_id = (
+            message.photo[-1].file_id
+        )
 
     elif message.document:
 
         media_type = "document"
-        media_id = message.document.file_id
+
+        media_id = (
+            message.document.file_id
+        )
 
     elif message.animation:
 
         media_type = "animation"
-        media_id = message.animation.file_id
+
+        media_id = (
+            message.animation.file_id
+        )
 
     elif message.audio:
 
         media_type = "audio"
-        media_id = message.audio.file_id
+
+        media_id = (
+            message.audio.file_id
+        )
 
     elif message.voice:
 
         media_type = "voice"
-        media_id = message.voice.file_id
+
+        media_id = (
+            message.voice.file_id
+        )
 
     else:
 
         return
 
-    caption = message.caption or ""
+    caption = (
+        message.caption or ""
+    )
 
     position = add_start_part(
+
         media_type=media_type,
+
         media_id=media_id,
+
         caption=caption
+
     )
 
     labels = {
 
-        "video": "🎥 Video",
+        "video":
+            "🎥 Video",
 
-        "photo": "🖼 Photo",
+        "photo":
+            "🖼 Photo",
 
-        "document": "📁 File / Document",
+        "document":
+            "📁 File / Document",
 
-        "animation": "🎞 GIF / Animation",
+        "animation":
+            "🎞 GIF / Animation",
 
-        "audio": "🎵 Audio",
+        "audio":
+            "🎵 Audio",
 
-        "voice": "🎤 Voice"
+        "voice":
+            "🎤 Voice"
 
     }
 
@@ -1414,6 +1810,7 @@ async def admin_media(
         "<code>/done</code>",
 
         parse_mode=ParseMode.HTML
+
     )
 
 
@@ -1434,11 +1831,14 @@ async def admin_text(
     if not message:
         return
 
-    text = message.text or ""
+    text = (
+        message.text or ""
+    )
 
     state = context.user_data.get(
         "state"
     )
+
 
     # =====================================================
     # ADD TEXT PART
@@ -1459,9 +1859,11 @@ async def admin_text(
             "<code>/done</code>",
 
             parse_mode=ParseMode.HTML
+
         )
 
         return
+
 
     # =====================================================
     # BUTTON NAME
@@ -1472,7 +1874,10 @@ async def admin_text(
         if not text.strip():
 
             await message.reply_text(
-                "❌ Button name empty nahi ho sakta."
+
+                "❌ Button name empty "
+                "nahi ho sakta."
+
             )
 
             return
@@ -1480,6 +1885,131 @@ async def admin_text(
         context.user_data[
             "button_name"
         ] = text.strip()
+
+        context.user_data[
+            "state"
+        ] = "button_emoji"
+
+        await message.reply_text(
+
+            "✨ <b>Premium Emoji ID bhejo</b>\n\n"
+
+            "Premium Emoji nahi chahiye "
+            "to <code>skip</code> bhejo.\n\n"
+
+            "Example:\n"
+            "<code>5368324170671202286</code>",
+
+            parse_mode=ParseMode.HTML
+
+        )
+
+        return
+
+
+    # =====================================================
+    # BUTTON EMOJI
+    # =====================================================
+
+    if state == "button_emoji":
+
+        emoji_id = text.strip()
+
+        if emoji_id.lower() == "skip":
+
+            context.user_data[
+                "button_emoji"
+            ] = None
+
+        else:
+
+            if not emoji_id.isdigit():
+
+                await message.reply_text(
+
+                    "❌ Invalid Premium Emoji ID.\n\n"
+
+                    "Numeric ID bhejo ya "
+                    "<code>skip</code> bhejo.",
+
+                    parse_mode=ParseMode.HTML
+
+                )
+
+                return
+
+            context.user_data[
+                "button_emoji"
+            ] = emoji_id
+
+        context.user_data[
+            "state"
+        ] = "button_color"
+
+        await message.reply_text(
+
+            "🎨 <b>Button Color</b>\n\n"
+
+            "🔵 <code>blue</code>\n"
+            "🟢 <code>green</code>\n"
+            "🔴 <code>red</code>",
+
+            parse_mode=ParseMode.HTML
+
+        )
+
+        return
+
+
+    # =====================================================
+    # BUTTON COLOR
+    # =====================================================
+
+    if state == "button_color":
+
+        color = text.strip().lower()
+
+        color_map = {
+
+            "blue":
+                "primary",
+
+            "green":
+                "success",
+
+            "red":
+                "danger",
+
+            "primary":
+                "primary",
+
+            "success":
+                "success",
+
+            "danger":
+                "danger"
+
+        }
+
+        if color not in color_map:
+
+            await message.reply_text(
+
+                "❌ Invalid color.\n\n"
+
+                "🔵 blue\n"
+                "🟢 green\n"
+                "🔴 red",
+
+                parse_mode=ParseMode.HTML
+
+            )
+
+            return
+
+        context.user_data[
+            "button_style"
+        ] = color_map[color]
 
         context.user_data[
             "state"
@@ -1493,9 +2023,11 @@ async def admin_text(
             "<code>https://example.com</code>",
 
             parse_mode=ParseMode.HTML
+
         )
 
         return
+
 
     # =====================================================
     # BUTTON URL
@@ -1512,22 +2044,45 @@ async def admin_text(
                 "❌ <b>Invalid URL</b>\n\n"
 
                 "URL <code>https://</code> "
-                "ya <code>http://</code> se start hona chahiye.",
+                "ya <code>http://</code> se "
+                "start hona chahiye.",
 
                 parse_mode=ParseMode.HTML
+
             )
 
             return
 
-        part_position = context.user_data.get(
-            "button_part"
+        part_position = (
+            context.user_data.get(
+                "button_part"
+            )
         )
 
-        button_name = context.user_data.get(
-            "button_name"
+        button_name = (
+            context.user_data.get(
+                "button_name"
+            )
         )
 
-        if not part_position or not button_name:
+        button_emoji = (
+            context.user_data.get(
+                "button_emoji"
+            )
+        )
+
+        button_style = (
+            context.user_data.get(
+                "button_style",
+                "primary"
+            )
+        )
+
+        if (
+            not part_position
+            or
+            not button_name
+        ):
 
             context.user_data.clear()
 
@@ -1538,33 +2093,91 @@ async def admin_text(
             return
 
         add_part_button(
-            part_position=part_position,
-            button_text=button_name,
-            button_url=url
+
+            part_position=(
+                part_position
+            ),
+
+            button_text=(
+                button_name
+            ),
+
+            button_url=url,
+
+            icon_custom_emoji_id=(
+                button_emoji
+            ),
+
+            button_style=(
+                button_style
+            )
+
         )
 
         context.user_data.clear()
+
+        color_names = {
+
+            "primary":
+                "🔵 Blue",
+
+            "success":
+                "🟢 Green",
+
+            "danger":
+                "🔴 Red"
+
+        }
+
+        color_label = (
+            color_names.get(
+                button_style,
+                button_style
+            )
+        )
+
+        emoji_label = (
+
+            "✨ Premium Emoji"
+
+            if button_emoji
+
+            else
+
+            "No Emoji"
+
+        )
 
         await message.reply_text(
 
             f"✅ <b>Button Added!</b>\n\n"
 
-            f"📦 Part: <b>#{part_position}</b>\n"
-            f"🔘 Button: <b>{button_name}</b>\n"
-            f"🔗 URL: <code>{url}</code>\n\n"
+            f"📦 Part: "
+            f"<b>#{part_position}</b>\n"
+
+            f"🔘 Button: "
+            f"<b>{button_name}</b>\n"
+
+            f"✨ Icon: "
+            f"<b>{emoji_label}</b>\n"
+
+            f"🎨 Color: "
+            f"<b>{color_label}</b>\n"
+
+            f"🔗 URL: "
+            f"<code>{url}</code>\n\n"
 
             "Button Part ke niche "
-            "alag line mein dikhega.\n\n"
-
-            "Aur button add karna ho to "
-            "<b>Admin Panel → Edit /start Msg → Add Button</b> use karo.",
+            "alag row mein dikhega.",
 
             parse_mode=ParseMode.HTML,
 
             reply_markup=admin_panel()
+
         )
 
         return
+
 
     # =====================================================
     # BROADCAST
@@ -1613,6 +2226,7 @@ async def admin_text(
             parse_mode=ParseMode.HTML,
 
             reply_markup=admin_panel()
+
         )
 
         return
@@ -1635,7 +2249,10 @@ async def done_command(
     ) != "start_part_add":
 
         await update.message.reply_text(
-            "❌ Abhi Part adding mode active nahi hai."
+
+            "❌ Abhi Part adding mode "
+            "active nahi hai."
+
         )
 
         return
@@ -1647,7 +2264,9 @@ async def done_command(
     if total == 0:
 
         await update.message.reply_text(
+
             "❌ Koi Part save nahi hua."
+
         )
 
         return
@@ -1658,7 +2277,8 @@ async def done_command(
 
         "✅ <b>/start sequence saved!</b>\n\n"
 
-        f"📦 Total Parts: <b>{total}</b>\n\n"
+        f"📦 Total Parts: "
+        f"<b>{total}</b>\n\n"
 
         "Test karne ke liye "
         "<code>/start</code> bhejo.",
@@ -1666,6 +2286,7 @@ async def done_command(
         parse_mode=ParseMode.HTML,
 
         reply_markup=admin_panel()
+
     )
 
 
@@ -1684,7 +2305,9 @@ async def cancel_command(
     if not context.user_data:
 
         await update.message.reply_text(
+
             "ℹ️ Koi active operation nahi hai."
+
         )
 
         return
@@ -1698,6 +2321,7 @@ async def cancel_command(
         parse_mode=ParseMode.HTML,
 
         reply_markup=admin_panel()
+
     )
 
 
@@ -1725,7 +2349,9 @@ async def learn_custom_emojis(
 
         return
 
-    message = update.effective_message
+    message = (
+        update.effective_message
+    )
 
     if not message:
         return
@@ -1733,11 +2359,13 @@ async def learn_custom_emojis(
     entities = []
 
     if message.entities:
+
         entities.extend(
             message.entities
         )
 
     if message.caption_entities:
+
         entities.extend(
             message.caption_entities
         )
@@ -1747,14 +2375,19 @@ async def learn_custom_emojis(
     for entity in entities:
 
         if entity.type != "custom_emoji":
+
             continue
 
-        emoji_id = entity.custom_emoji_id
+        emoji_id = (
+            entity.custom_emoji_id
+        )
 
         if not emoji_id:
+
             continue
 
         if emoji_id in found:
+
             continue
 
         found.append(
@@ -1777,15 +2410,21 @@ async def learn_custom_emojis(
         if after > before:
 
             row = db_one(
+
                 """
                 SELECT id
                 FROM emojis
                 WHERE emoji_id=?
                 """,
-                (emoji_id,)
+
+                (
+                    emoji_id,
+                )
+
             )
 
             if not row:
+
                 continue
 
             tag_id = row["id"]
@@ -1806,12 +2445,13 @@ async def learn_custom_emojis(
                         f"🏷️ Tag:\n"
                         f"<code>{{emoji:{tag_id}}}</code>\n\n"
 
-                        "Is tag ko apne Part ke "
-                        "text/caption mein use karo."
+                        "Is ID ko button mein bhi "
+                        "use kar sakte ho."
 
                     ),
 
                     parse_mode=ParseMode.HTML
+
                 )
 
             except Exception as e:
@@ -1838,7 +2478,9 @@ async def emojis_command(
     if not emojis:
 
         await update.message.reply_text(
+
             "📭 No saved custom emojis."
+
         )
 
         return
@@ -1851,7 +2493,10 @@ async def emojis_command(
 
         lines.append(
 
-            f"{premium_emoji(e['emoji_id'], e['emoji'])}\n"
+            f"{premium_emoji("
+            f"e['emoji_id'],"
+            f"e['emoji']"
+            f")}\n"
 
             f"🆔 ID: "
             f"<code>{e['emoji_id']}</code>\n"
@@ -1866,6 +2511,7 @@ async def emojis_command(
         "\n".join(lines),
 
         parse_mode=ParseMode.HTML
+
     )
 
 
@@ -1888,6 +2534,7 @@ async def panel_command(
         parse_mode=ParseMode.HTML,
 
         reply_markup=admin_panel()
+
     )
 
 
@@ -1907,6 +2554,7 @@ async def id_command(
 
         f"Your Telegram ID: "
         f"{update.effective_user.id}"
+
     )
 
 
@@ -1916,7 +2564,10 @@ async def id_command(
 
 def main():
 
-    if BOT_TOKEN == "PASTE_BOT_TOKEN_HERE":
+    if (
+        BOT_TOKEN ==
+        "PASTE_BOT_TOKEN_HERE"
+    ):
 
         print(
             "❌ Please set BOT_TOKEN."
@@ -1930,6 +2581,7 @@ def main():
         .token(BOT_TOKEN)
         .build()
     )
+
 
     # =====================================================
     # COMMANDS
@@ -1977,6 +2629,7 @@ def main():
         )
     )
 
+
     # =====================================================
     # JOIN REQUEST
     # =====================================================
@@ -1986,6 +2639,7 @@ def main():
             join_request
         )
     )
+
 
     # =====================================================
     # CALLBACKS
@@ -1997,6 +2651,7 @@ def main():
         )
     )
 
+
     # =====================================================
     # MEDIA
     # =====================================================
@@ -2004,48 +2659,72 @@ def main():
     media_filter = (
 
         filters.VIDEO
+
         | filters.PHOTO
+
         | filters.Document.ALL
+
         | filters.ANIMATION
+
         | filters.AUDIO
+
         | filters.VOICE
 
     )
 
     app.add_handler(
+
         MessageHandler(
             media_filter,
             admin_media
         ),
+
         group=0
+
     )
+
 
     # =====================================================
     # TEXT
     # =====================================================
 
     app.add_handler(
+
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
+
+            filters.TEXT
+            & ~filters.COMMAND,
+
             admin_text
+
         ),
+
         group=1
+
     )
+
 
     # =====================================================
     # PREMIUM EMOJI LEARNING
     # =====================================================
 
     app.add_handler(
+
         MessageHandler(
+
             filters.ALL,
+
             learn_custom_emojis
+
         ),
+
         group=2
+
     )
 
+
     # =====================================================
-    # START
+    # START BOT
     # =====================================================
 
     print(
@@ -2053,7 +2732,10 @@ def main():
     )
 
     app.run_polling(
-        allowed_updates=Update.ALL_TYPES
+
+        allowed_updates=
+        Update.ALL_TYPES
+
     )
 
 
@@ -2062,4 +2744,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main()
