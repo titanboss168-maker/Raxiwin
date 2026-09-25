@@ -92,6 +92,17 @@ CREATE TABLE IF NOT EXISTS emojis (
 )
 """)
 
+db_exec("""
+CREATE TABLE IF NOT EXISTS start_parts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position INTEGER NOT NULL,
+    media_type TEXT,
+    media_id TEXT,
+    text TEXT,
+    caption TEXT
+)
+""")
+
 
 # =========================================================
 # SETTINGS
@@ -210,6 +221,53 @@ def build_emoji_text(text):
             )
 
     return text
+
+
+# =========================================================
+# START SEQUENCE (multi-part /start message)
+# =========================================================
+
+def get_start_parts():
+    return db_all(
+        "SELECT * FROM start_parts ORDER BY position ASC"
+    )
+
+
+def add_start_part(
+    media_type=None,
+    media_id=None,
+    text=None,
+    caption=None
+):
+    row = db_one(
+        "SELECT MAX(position) as maxpos FROM start_parts"
+    )
+
+    next_pos = (row["maxpos"] or 0) + 1
+
+    db_exec(
+        """
+        INSERT INTO start_parts(
+            position, media_type, media_id, text, caption
+        )
+        VALUES(?,?,?,?,?)
+        """,
+        (
+            next_pos,
+            media_type,
+            media_id,
+            text,
+            caption
+        )
+    )
+
+    return next_pos
+
+
+def clear_start_parts():
+    db_exec(
+        "DELETE FROM start_parts"
+    )
 
 
 # =========================================================
@@ -405,6 +463,117 @@ async def send_saved_start(
     update,
     context
 ):
+
+    # -----------------------------------------------------
+    # MULTI-PART /start SEQUENCE (2-3-4+ messages)
+    # -----------------------------------------------------
+
+    parts = get_start_parts()
+
+    if parts:
+
+        chat_id = update.effective_chat.id
+
+        keyboard = build_post_keyboard()
+
+        last_index = len(parts) - 1
+
+        for i, part in enumerate(parts):
+
+            is_last = (i == last_index)
+
+            reply_markup = keyboard if is_last else None
+
+            media_type = part["media_type"]
+            media_id = part["media_id"]
+
+            caption = build_emoji_text(
+                part["caption"] or ""
+            ) or None
+
+            if media_type == "video":
+
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+
+            elif media_type == "photo":
+
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+
+            elif media_type == "document":
+
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+
+            elif media_type == "animation":
+
+                await context.bot.send_animation(
+                    chat_id=chat_id,
+                    animation=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+
+            elif media_type == "audio":
+
+                await context.bot.send_audio(
+                    chat_id=chat_id,
+                    audio=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+
+            elif media_type == "voice":
+
+                await context.bot.send_voice(
+                    chat_id=chat_id,
+                    voice=media_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+
+            else:
+
+                part_text = build_emoji_text(
+                    part["text"] or ""
+                )
+
+                if part_text:
+
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=part_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=reply_markup
+                    )
+
+            if not is_last:
+                await asyncio.sleep(0.4)
+
+        return
+
+    # -----------------------------------------------------
+    # LEGACY SINGLE /start MESSAGE (fallback if no parts saved)
+    # -----------------------------------------------------
 
     media_type = get_setting(
         "start_media_type",
@@ -1045,60 +1214,178 @@ async def callbacks(
 
     if data == "edit_start":
 
-        media_type = get_setting(
-            "start_media_type",
-            ""
+        count = len(
+            get_start_parts()
         )
-
-        if media_type:
-
-            current = (
-
-                f"Current media: "
-                f"<b>{media_type}</b>\n\n"
-
-                "Caption:\n"
-
-                f"{get_setting('start_caption', '')}"
-
-            )
-
-        else:
-
-            current = (
-
-                "Current text:\n\n"
-
-                f"{get_setting('start_message', '👋 Welcome!')}"
-
-            )
 
         await q.edit_message_text(
 
             "✏️ <b>Edit /start Message</b>\n\n"
 
-            f"{current}\n\n"
+            f"📦 Saved parts: <b>{count}</b>\n\n"
 
-            "Now send any of these:\n\n"
+            "/start ab ek se zyada messages (parts) mein "
+            "bhi bhej sakte ho — jaise pehle text, phir "
+            "photo, phir video, waghera.\n\n"
 
-            "🎥 Video\n"
-            "🖼️ Photo\n"
-            "📁 File / Document\n"
-            "🎞️ GIF / Animation\n"
-            "🎵 Audio\n"
-            "🎤 Voice\n"
-            "📝 Normal text\n\n"
+            "Parts wahi order mein bhejte honge jis order "
+            "mein aapne add kiye the.",
 
-            "Media ka caption bhi save hoga.\n\n"
+            parse_mode=ParseMode.HTML,
 
-            "Use /cancel to cancel.",
+            reply_markup=InlineKeyboardMarkup([
+
+                [
+                    InlineKeyboardButton(
+                        "➕ Add Part",
+                        callback_data="add_start_part"
+                    )
+                ],
+
+                [
+                    InlineKeyboardButton(
+                        "👀 View Parts",
+                        callback_data="view_start_parts"
+                    )
+                ],
+
+                [
+                    InlineKeyboardButton(
+                        "🗑 Clear All Parts",
+                        callback_data="clear_start_parts"
+                    )
+                ],
+
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back",
+                        callback_data="back_panel"
+                    )
+                ],
+
+            ])
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # ADD START PART
+    # -----------------------------------------------------
+
+    if data == "add_start_part":
+
+        context.user_data[
+            "state"
+        ] = "start_part_add"
+
+        await q.edit_message_text(
+
+            "➕ <b>Add /start Part</b>\n\n"
+
+            "Ab jo bhi message bhejoge (text, photo, "
+            "video, file, gif, audio, voice) — wo ek naya "
+            "part ban kar saved parts ke last mein add ho "
+            "jayega.\n\n"
+
+            "Jitne chaho utne messages ek-ek karke bhejo.\n\n"
+
+            "Jab sab parts bhej chuke ho to <code>/done</code> "
+            "bhejo.\n\n"
+
+            "Cancel karne ke liye /cancel bhejo.",
 
             parse_mode=ParseMode.HTML
         )
 
-        context.user_data[
-            "state"
-        ] = "start_message"
+        return
+
+    # -----------------------------------------------------
+    # VIEW START PARTS
+    # -----------------------------------------------------
+
+    if data == "view_start_parts":
+
+        parts = get_start_parts()
+
+        if not parts:
+
+            text = (
+                "📭 <b>No /start parts saved.</b>"
+            )
+
+        else:
+
+            lines = [
+                "📦 <b>Saved /start Parts</b>\n"
+            ]
+
+            for i, p in enumerate(parts, 1):
+
+                if p["media_type"]:
+
+                    extra = (
+                        " (with caption)"
+                        if p["caption"]
+                        else ""
+                    )
+
+                    lines.append(
+                        f"{i}. 📎 {p['media_type']}{extra}"
+                    )
+
+                else:
+
+                    preview = (p["text"] or "")[:40]
+
+                    suffix = (
+                        "..."
+                        if len(p["text"] or "") > 40
+                        else ""
+                    )
+
+                    lines.append(
+                        f"{i}. 📝 {preview}{suffix}"
+                    )
+
+            text = "\n".join(lines)
+
+        await q.edit_message_text(
+
+            text,
+
+            parse_mode=ParseMode.HTML,
+
+            reply_markup=InlineKeyboardMarkup([
+
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back",
+                        callback_data="edit_start"
+                    )
+                ]
+
+            ])
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # CLEAR START PARTS
+    # -----------------------------------------------------
+
+    if data == "clear_start_parts":
+
+        clear_start_parts()
+
+        await q.answer(
+            "All /start parts cleared ✅",
+            show_alert=True
+        )
+
+        await show_panel(
+            update,
+            context
+        )
 
         return
 
@@ -1201,7 +1488,7 @@ async def admin_media(
 
     if context.user_data.get(
         "state"
-    ) != "start_message":
+    ) != "start_part_add":
 
         return
 
@@ -1276,31 +1563,14 @@ async def admin_media(
         message.caption or ""
     )
 
-    # Save media
+    # Save as a new part (state stays "start_part_add" so
+    # the admin can keep sending more parts)
 
-    set_setting(
-        "start_media_type",
-        media_type
+    position = add_start_part(
+        media_type=media_type,
+        media_id=media_id,
+        caption=caption
     )
-
-    set_setting(
-        "start_media_id",
-        media_id
-    )
-
-    set_setting(
-        "start_caption",
-        caption
-    )
-
-    # Clear old text
-
-    set_setting(
-        "start_message",
-        ""
-    )
-
-    context.user_data.clear()
 
     labels = {
 
@@ -1326,21 +1596,13 @@ async def admin_media(
 
     await message.reply_text(
 
-        "✅ <b>/start Message Saved!</b>\n\n"
+        f"✅ Part #{position} saved "
+        f"({labels.get(media_type, media_type)}).\n\n"
 
-        f"📦 Type: "
-        f"<b>{labels.get(media_type, media_type)}</b>\n"
+        "Next part bhejo, ya <code>/done</code> "
+        "likh kar finish karo.",
 
-        "📝 Caption: <b>Saved</b>\n"
-
-        "🔘 Buttons: "
-        "<b>Will be attached automatically</b>\n\n"
-
-        "Ab <code>/start</code> bhejkar test karo.",
-
-        parse_mode=ParseMode.HTML,
-
-        reply_markup=admin_panel()
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -1378,6 +1640,51 @@ async def admin_text(
         await message.reply_text(
             "❌ Cancelled.",
             reply_markup=admin_panel()
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # START PART ADD (text part / finish sequence)
+    # -----------------------------------------------------
+
+    if state == "start_part_add":
+
+        if text.lower() == "/done":
+
+            context.user_data.clear()
+
+            total = len(
+                get_start_parts()
+            )
+
+            await message.reply_text(
+
+                "✅ <b>/start sequence saved!</b>\n\n"
+
+                f"📦 Total parts: <b>{total}</b>\n\n"
+
+                "Test karne ke liye /start bhejo.",
+
+                parse_mode=ParseMode.HTML,
+
+                reply_markup=admin_panel()
+            )
+
+            return
+
+        position = add_start_part(
+            text=text
+        )
+
+        await message.reply_text(
+
+            f"✅ Part #{position} saved (text).\n\n"
+
+            "Next part bhejo, ya <code>/done</code> "
+            "likh kar finish karo.",
+
+            parse_mode=ParseMode.HTML
         )
 
         return
