@@ -1,6 +1,7 @@
 import os
 import asyncio
 import sqlite3
+from html import escape
 from urllib.parse import urlparse
 
 from telegram import (
@@ -51,33 +52,18 @@ db.row_factory = sqlite3.Row
 
 
 def db_exec(query, params=()):
-
     cur = db.cursor()
-
-    cur.execute(
-        query,
-        params
-    )
-
+    cur.execute(query, params)
     db.commit()
-
     return cur
 
 
 def db_one(query, params=()):
-
-    return db_exec(
-        query,
-        params
-    ).fetchone()
+    return db_exec(query, params).fetchone()
 
 
 def db_all(query, params=()):
-
-    return db_exec(
-        query,
-        params
-    ).fetchall()
+    return db_exec(query, params).fetchall()
 
 
 # =========================================================
@@ -91,7 +77,6 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 """)
 
-
 db_exec("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -99,7 +84,6 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT
 )
 """)
-
 
 db_exec("""
 CREATE TABLE IF NOT EXISTS pending_requests (
@@ -110,7 +94,6 @@ CREATE TABLE IF NOT EXISTS pending_requests (
 )
 """)
 
-
 db_exec("""
 CREATE TABLE IF NOT EXISTS emojis (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,7 +101,6 @@ CREATE TABLE IF NOT EXISTS emojis (
     emoji TEXT DEFAULT '✨'
 )
 """)
-
 
 db_exec("""
 CREATE TABLE IF NOT EXISTS start_parts (
@@ -130,7 +112,6 @@ CREATE TABLE IF NOT EXISTS start_parts (
     caption TEXT
 )
 """)
-
 
 db_exec("""
 CREATE TABLE IF NOT EXISTS start_buttons (
@@ -149,26 +130,40 @@ CREATE TABLE IF NOT EXISTS start_buttons (
 # DATABASE MIGRATION
 # =========================================================
 
-try:
+def ensure_column(
+    table,
+    column,
+    definition
+):
+    columns = db_all(
+        f"PRAGMA table_info({table})"
+    )
 
-    db_exec("""
-    ALTER TABLE start_buttons
-    ADD COLUMN icon_custom_emoji_id TEXT
-    """)
+    exists = any(
+        row["name"] == column
+        for row in columns
+    )
 
-except sqlite3.OperationalError:
-    pass
+    if not exists:
+        db_exec(
+            f"""
+            ALTER TABLE {table}
+            ADD COLUMN {column} {definition}
+            """
+        )
 
 
-try:
+ensure_column(
+    "start_buttons",
+    "icon_custom_emoji_id",
+    "TEXT"
+)
 
-    db_exec("""
-    ALTER TABLE start_buttons
-    ADD COLUMN button_style TEXT DEFAULT 'primary'
-    """)
-
-except sqlite3.OperationalError:
-    pass
+ensure_column(
+    "start_buttons",
+    "button_style",
+    "TEXT DEFAULT 'primary'"
+)
 
 
 # =========================================================
@@ -300,36 +295,10 @@ def premium_emoji(
 ):
 
     return (
-        f'<tg-emoji emoji-id="{emoji_id}">'
-        f'{fallback}'
+        f'<tg-emoji emoji-id="{escape(str(emoji_id))}">'
+        f'{escape(fallback)}'
         f'</tg-emoji>'
     )
-
-
-def build_emoji_text(text):
-
-    if not text:
-        return text
-
-    for row in get_emojis():
-
-        tag = (
-            "{emoji:"
-            + str(row["id"])
-            + "}"
-        )
-
-        if tag in text:
-
-            text = text.replace(
-                tag,
-                premium_emoji(
-                    row["emoji_id"],
-                    row["emoji"] or "✨"
-                )
-            )
-
-    return text
 
 
 # =========================================================
@@ -489,41 +458,34 @@ def build_part_keyboard(
 
     keyboard = []
 
+    color_icons = {
+        "primary": "🔵",
+        "success": "🟢",
+        "danger": "🔴"
+    }
+
     for button in buttons:
-
-        kwargs = {
-
-            "text":
-                button["button_text"],
-
-            "url":
-                button["button_url"]
-
-        }
-
-        emoji_id = (
-            button["icon_custom_emoji_id"]
-        )
-
-        if emoji_id:
-
-            kwargs[
-                "icon_custom_emoji_id"
-            ] = emoji_id
 
         style = (
             button["button_style"]
             or "primary"
         )
 
-        kwargs[
-            "style"
-        ] = style
+        icon = color_icons.get(
+            style,
+            "🔵"
+        )
+
+        button_text = (
+            f"{icon} "
+            f"{button['button_text']}"
+        )
 
         keyboard.append([
 
             InlineKeyboardButton(
-                **kwargs
+                text=button_text,
+                url=button["button_url"]
             )
 
         ])
@@ -569,23 +531,16 @@ async def send_start_sequence(
     if not parts:
         return False
 
-    last_index = (
-        len(parts) - 1
-    )
+    last_index = len(parts) - 1
 
     for i, part in enumerate(parts):
 
         position = part["position"]
 
-        media_type = (
-            part["media_type"]
-        )
+        media_type = part["media_type"]
+        media_id = part["media_id"]
 
-        media_id = (
-            part["media_id"]
-        )
-
-        caption = build_emoji_text(
+        caption = (
             part["caption"] or ""
         ) or None
 
@@ -600,96 +555,76 @@ async def send_start_sequence(
             if media_type == "video":
 
                 await bot.send_video(
-
                     chat_id=chat_id,
                     video=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
-
                 )
-
 
             elif media_type == "photo":
 
                 await bot.send_photo(
-
                     chat_id=chat_id,
                     photo=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
-
                 )
-
 
             elif media_type == "document":
 
                 await bot.send_document(
-
                     chat_id=chat_id,
                     document=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
-
                 )
-
 
             elif media_type == "animation":
 
                 await bot.send_animation(
-
                     chat_id=chat_id,
                     animation=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
-
                 )
-
 
             elif media_type == "audio":
 
                 await bot.send_audio(
-
                     chat_id=chat_id,
                     audio=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
-
                 )
-
 
             elif media_type == "voice":
 
                 await bot.send_voice(
-
                     chat_id=chat_id,
                     voice=media_id,
                     caption=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
-
                 )
-
 
             else:
 
-                part_text = build_emoji_text(
+                part_text = (
                     part["text"] or ""
                 )
 
                 if part_text:
 
                     await bot.send_message(
-
                         chat_id=chat_id,
                         text=part_text,
                         parse_mode=ParseMode.HTML,
                         reply_markup=reply_markup
-
                     )
 
         except Exception as e:
@@ -701,9 +636,7 @@ async def send_start_sequence(
 
         if i != last_index:
 
-            await asyncio.sleep(
-                0.4
-            )
+            await asyncio.sleep(0.4)
 
     return True
 
@@ -764,27 +697,17 @@ async def show_panel(
         await q.answer()
 
         await q.edit_message_text(
-
-            text or
-            "⚙️ <b>Admin Panel</b>",
-
+            text or "⚙️ <b>Admin Panel</b>",
             parse_mode=ParseMode.HTML,
-
             reply_markup=admin_panel()
-
         )
 
     else:
 
         await update.message.reply_text(
-
-            text or
-            "⚙️ <b>Admin Panel</b>",
-
+            text or "⚙️ <b>Admin Panel</b>",
             parse_mode=ParseMode.HTML,
-
             reply_markup=admin_panel()
-
         )
 
 
@@ -798,78 +721,38 @@ def premium_menu_text_and_keyboard():
         get_emojis()
     )
 
-    save_mode = get_setting(
-        "save_mode",
-        "0"
-    )
-
-    save_text = (
-        "ON 🟢"
-        if save_mode == "1"
-        else
-        "OFF 🔴"
-    )
-
     text = (
-
         "✨ <b>Premium Emoji Manager</b>\n\n"
-
-        f"🧠 Learned Emoji IDs: "
-        f"<b>{count}</b>\n"
-
-        f"💾 Save Mode: "
-        f"<b>{save_text}</b>\n\n"
-
-        "Save Mode ON karo.\n"
-
-        "Phir Premium Emoji wala "
-        "message bot ko bhejo.\n\n"
-
-        "Bot tag dega:\n"
-
-        "<code>{emoji:1}</code>\n\n"
-
-        "Button ke liye bhi Premium "
-        "Emoji ID use kar sakte ho."
-
+        f"🧠 Saved Premium Emojis: "
+        f"<b>{count}</b>\n\n"
+        "Bas Premium Emoji directly bot ko bhejo.\n\n"
+        "Bot automatically:\n"
+        "🆔 Custom Emoji ID capture karega\n"
+        "💾 Database me save karega\n"
+        "✨ /start message me preserve karega"
     )
 
     keyboard = InlineKeyboardMarkup([
 
         [
-
             InlineKeyboardButton(
-                "💾 Toggle Save Mode",
-                callback_data="toggle_save"
-            )
-
-        ],
-
-        [
-
-            InlineKeyboardButton(
-                "👀 View Emojis & IDs",
+                "👀 View Saved Emojis",
                 callback_data="view_emojis"
             )
-
         ],
 
         [
-
             InlineKeyboardButton(
                 "🗑 Clear All Emojis",
                 callback_data="clear_emojis"
             )
-
         ],
 
         [
-
             InlineKeyboardButton(
                 "⬅️ Back",
                 callback_data="back_panel"
             )
-
         ]
 
     ])
@@ -886,42 +769,30 @@ async def start(
     context
 ):
 
-    user = (
-        update.effective_user
-    )
+    user = update.effective_user
 
     save_user(user)
 
     if is_admin(user.id):
 
         await update.message.reply_text(
-
             "⚙️ <b>Admin Panel</b>",
-
             parse_mode=ParseMode.HTML,
-
             reply_markup=admin_panel()
-
         )
 
         return
 
     sent = await send_start_sequence(
-
         context.bot,
-
         update.effective_chat.id
-
     )
 
     if not sent:
 
         await update.message.reply_text(
-
             "👋 <b>Welcome!</b>",
-
             parse_mode=ParseMode.HTML
-
         )
 
 
@@ -934,18 +805,12 @@ async def join_request(
     context
 ):
 
-    request = (
-        update.chat_join_request
-    )
-
-    user = (
-        request.from_user
-    )
+    request = update.chat_join_request
+    user = request.from_user
 
     save_user(user)
 
     db_exec(
-
         """
         INSERT OR REPLACE INTO pending_requests(
             user_id,
@@ -955,36 +820,27 @@ async def join_request(
         )
         VALUES(?,?,?,?)
         """,
-
         (
             user.id,
             request.chat.id,
             user.username or "",
             user.first_name or ""
         )
-
     )
 
     try:
 
         sent = await send_start_sequence(
-
             context.bot,
-
             user.id
-
         )
 
         if not sent:
 
             await context.bot.send_message(
-
                 chat_id=user.id,
-
                 text="👋 <b>Welcome!</b>",
-
                 parse_mode=ParseMode.HTML
-
             )
 
     except Exception as e:
@@ -1010,17 +866,13 @@ async def callbacks(
     ):
 
         await q.answer(
-
             "Not allowed.",
-
             show_alert=True
-
         )
 
         return
 
     data = q.data
-
 
     # =====================================================
     # BROADCAST
@@ -1030,25 +882,17 @@ async def callbacks(
 
         context.user_data.clear()
 
-        context.user_data[
-            "state"
-        ] = "broadcast"
+        context.user_data["state"] = "broadcast"
 
         await q.edit_message_text(
-
             "📢 <b>Broadcast</b>\n\n"
-
             "Send the message you want "
             "to broadcast.\n\n"
-
             "Use /cancel to cancel.",
-
             parse_mode=ParseMode.HTML
-
         )
 
         return
-
 
     # =====================================================
     # APPROVE ALL
@@ -1067,11 +911,8 @@ async def callbacks(
             try:
 
                 await context.bot.approve_chat_join_request(
-
                     chat_id=r["chat_id"],
-
                     user_id=r["user_id"]
-
                 )
 
                 approved += 1
@@ -1083,32 +924,21 @@ async def callbacks(
                 )
 
             db_exec(
-
                 """
                 DELETE FROM pending_requests
                 WHERE user_id=?
                 """,
-
-                (
-                    r["user_id"],
-                )
-
+                (r["user_id"],)
             )
 
-            await asyncio.sleep(
-                0.1
-            )
+            await asyncio.sleep(0.1)
 
         await q.answer(
-
             f"{approved} requests approved.",
-
             show_alert=True
-
         )
 
         return
-
 
     # =====================================================
     # EDIT START
@@ -1128,13 +958,9 @@ async def callbacks(
         await q.edit_message_text(
 
             "✏️ <b>Edit /start Message</b>\n\n"
-
-            f"📦 Saved Parts: "
-            f"<b>{count}</b>\n\n"
-
+            f"📦 Saved Parts: <b>{count}</b>\n\n"
             "Text, video, file etc. "
             "ek-ek karke add kar sakte ho.\n\n"
-
             "Buttons kisi bhi Part ke "
             "niche add kar sakte ho.",
 
@@ -1143,48 +969,38 @@ async def callbacks(
             reply_markup=InlineKeyboardMarkup([
 
                 [
-
                     InlineKeyboardButton(
                         "➕ Add Part",
                         callback_data="add_start_part"
                     )
-
                 ],
 
                 [
-
                     InlineKeyboardButton(
                         "🔘 Add Button",
                         callback_data="add_button"
                     )
-
                 ],
 
                 [
-
                     InlineKeyboardButton(
                         "👀 View Parts",
                         callback_data="view_start_parts"
                     )
-
                 ],
 
                 [
-
                     InlineKeyboardButton(
                         "🗑 Clear All Parts",
                         callback_data="clear_start_parts"
                     )
-
                 ],
 
                 [
-
                     InlineKeyboardButton(
                         "⬅️ Back",
                         callback_data="back_panel"
                     )
-
                 ]
 
             ])
@@ -1192,7 +1008,6 @@ async def callbacks(
         )
 
         return
-
 
     # =====================================================
     # ADD PART
@@ -1202,16 +1017,12 @@ async def callbacks(
 
         context.user_data.clear()
 
-        context.user_data[
-            "state"
-        ] = "start_part_add"
+        context.user_data["state"] = "start_part_add"
 
         await q.edit_message_text(
 
             "➕ <b>Add /start Part</b>\n\n"
-
-            "Ab message bhejo:\n"
-
+            "Ab message bhejo:\n\n"
             "🎥 Video\n"
             "🖼 Photo\n"
             "📁 File\n"
@@ -1219,21 +1030,17 @@ async def callbacks(
             "🎵 Audio\n"
             "🎤 Voice\n"
             "📝 Text\n\n"
-
+            "Premium Emoji bhi direct bhej sakte ho.\n\n"
             "Har message ek alag Part banega.\n\n"
-
             "Sab parts ke baad:\n"
             "<code>/done</code>\n\n"
-
             "Cancel:\n"
             "<code>/cancel</code>",
 
             parse_mode=ParseMode.HTML
-
         )
 
         return
-
 
     # =====================================================
     # ADD BUTTON
@@ -1246,11 +1053,8 @@ async def callbacks(
         if not parts:
 
             await q.answer(
-
                 "Pehle kam se kam 1 Part add karo.",
-
                 show_alert=True
-
             )
 
             return
@@ -1262,16 +1066,11 @@ async def callbacks(
             keyboard.append([
 
                 InlineKeyboardButton(
-
                     f"📦 Part #{p['position']}",
-
                     callback_data=(
-
                         f"button_part_"
                         f"{p['position']}"
-
                     )
-
                 )
 
             ])
@@ -1279,11 +1078,8 @@ async def callbacks(
         keyboard.append([
 
             InlineKeyboardButton(
-
                 "⬅️ Back",
-
                 callback_data="edit_start"
-
             )
 
         ])
@@ -1291,7 +1087,6 @@ async def callbacks(
         await q.edit_message_text(
 
             "🔘 <b>Select Part</b>\n\n"
-
             "Jis Part ke niche button "
             "lagana hai wo select karo:",
 
@@ -1300,39 +1095,30 @@ async def callbacks(
             reply_markup=InlineKeyboardMarkup(
                 keyboard
             )
-
         )
 
         return
-
 
     # =====================================================
     # SELECT BUTTON PART
     # =====================================================
 
-    if data.startswith(
-        "button_part_"
-    ):
+    if data.startswith("button_part_"):
 
         try:
 
             part_position = int(
-
                 data.replace(
                     "button_part_",
                     ""
                 )
-
             )
 
         except ValueError:
 
             await q.answer(
-
                 "Invalid Part.",
-
                 show_alert=True
-
             )
 
             return
@@ -1344,40 +1130,32 @@ async def callbacks(
         if not part:
 
             await q.answer(
-
                 "Part not found.",
-
                 show_alert=True
-
             )
 
             return
 
         context.user_data.clear()
 
-        context.user_data[
-            "state"
-        ] = "button_name"
+        context.user_data["state"] = "button_name"
 
-        context.user_data[
-            "button_part"
-        ] = part_position
+        context.user_data["button_part"] = (
+            part_position
+        )
 
         await q.edit_message_text(
 
             f"🔘 <b>Part #{part_position}</b>\n\n"
-
             "Button ka naam bhejo.\n\n"
-
             "Example:\n"
-            "<code>REGISTER NOW</code>",
+            "<code>REGISTER NOW</code>\n\n"
+            "Normal emoji direct use kar sakte ho.",
 
             parse_mode=ParseMode.HTML
-
         )
 
         return
-
 
     # =====================================================
     # VIEW START PARTS
@@ -1404,22 +1182,15 @@ async def callbacks(
                 position = p["position"]
 
                 label = (
-
                     p["media_type"]
-
                     if p["media_type"]
-
                     else
-
                     "text"
-
                 )
 
                 lines.append(
-
                     f"📦 <b>Part #{position}</b> "
-                    f"— {label}"
-
+                    f"— {escape(label)}"
                 )
 
                 buttons = get_part_buttons(
@@ -1435,33 +1206,24 @@ async def callbacks(
                             or "primary"
                         )
 
-                        emoji_status = (
-
-                            "✨"
-
-                            if b[
-                                "icon_custom_emoji_id"
-                            ]
-
-                            else
-
-                            "▫️"
-
+                        icon = {
+                            "primary": "🔵",
+                            "success": "🟢",
+                            "danger": "🔴"
+                        }.get(
+                            style,
+                            "🔵"
                         )
 
                         lines.append(
-
-                            f"   {emoji_status} "
-                            f"🔘 {b['button_text']} "
-                            f"[{style}]"
-
+                            f"   {icon} "
+                            f"🔘 "
+                            f"{escape(b['button_text'])}"
                         )
 
                 lines.append("")
 
-            text = "\n".join(
-                lines
-            )
+            text = "\n".join(lines)
 
         await q.edit_message_text(
 
@@ -1472,29 +1234,23 @@ async def callbacks(
             reply_markup=InlineKeyboardMarkup([
 
                 [
-
                     InlineKeyboardButton(
                         "🔘 Add Button",
                         callback_data="add_button"
                     )
-
                 ],
 
                 [
-
                     InlineKeyboardButton(
                         "⬅️ Back",
                         callback_data="edit_start"
                     )
-
                 ]
 
             ])
-
         )
 
         return
-
 
     # =====================================================
     # CLEAR START PARTS
@@ -1505,11 +1261,8 @@ async def callbacks(
         clear_start_parts()
 
         await q.answer(
-
             "All Parts + Buttons cleared ✅",
-
             show_alert=True
-
         )
 
         await show_panel(
@@ -1518,7 +1271,6 @@ async def callbacks(
         )
 
         return
-
 
     # =====================================================
     # PREMIUM MENU
@@ -1531,56 +1283,12 @@ async def callbacks(
         )
 
         await q.edit_message_text(
-
             text,
-
             parse_mode=ParseMode.HTML,
-
             reply_markup=keyboard
-
         )
 
         return
-
-
-    # =====================================================
-    # TOGGLE SAVE
-    # =====================================================
-
-    if data == "toggle_save":
-
-        current = get_setting(
-            "save_mode",
-            "0"
-        )
-
-        set_setting(
-
-            "save_mode",
-
-            "0"
-            if current == "1"
-            else
-            "1"
-
-        )
-
-        text, keyboard = (
-            premium_menu_text_and_keyboard()
-        )
-
-        await q.edit_message_text(
-
-            text,
-
-            parse_mode=ParseMode.HTML,
-
-            reply_markup=keyboard
-
-        )
-
-        return
-
 
     # =====================================================
     # VIEW EMOJIS
@@ -1599,29 +1307,18 @@ async def callbacks(
         else:
 
             lines = [
-                "✨ <b>Learned Premium Emojis</b>\n"
+                "✨ <b>Saved Premium Emojis</b>\n"
             ]
 
             for e in emojis:
 
                 lines.append(
-
-                    f"{premium_emoji("
-                    f"e['emoji_id'],"
-                    f"e['emoji']"
-                    f")}\n"
-
-                    f"🏷️ Tag: "
-                    f"<code>{{emoji:{e['id']}}}</code>\n"
-
+                    f"{premium_emoji(e['emoji_id'], e['emoji'])}\n"
                     f"🆔 ID: "
-                    f"<code>{e['emoji_id']}</code>\n"
-
+                    f"<code>{escape(str(e['emoji_id']))}</code>\n"
                 )
 
-            text = "\n".join(
-                lines
-            )
+            text = "\n".join(lines)
 
         await q.edit_message_text(
 
@@ -1632,20 +1329,16 @@ async def callbacks(
             reply_markup=InlineKeyboardMarkup([
 
                 [
-
                     InlineKeyboardButton(
                         "⬅️ Back",
                         callback_data="premium_menu"
                     )
-
                 ]
 
             ])
-
         )
 
         return
-
 
     # =====================================================
     # CLEAR EMOJIS
@@ -1658,11 +1351,8 @@ async def callbacks(
         )
 
         await q.answer(
-
             "All emoji IDs cleared ✅",
-
             show_alert=True
-
         )
 
         await show_panel(
@@ -1671,7 +1361,6 @@ async def callbacks(
         )
 
         return
-
 
     # =====================================================
     # BACK
@@ -1716,88 +1405,61 @@ async def admin_media(
     if message.video:
 
         media_type = "video"
-
-        media_id = (
-            message.video.file_id
-        )
+        media_id = message.video.file_id
 
     elif message.photo:
 
         media_type = "photo"
-
-        media_id = (
-            message.photo[-1].file_id
-        )
+        media_id = message.photo[-1].file_id
 
     elif message.document:
 
         media_type = "document"
-
-        media_id = (
-            message.document.file_id
-        )
+        media_id = message.document.file_id
 
     elif message.animation:
 
         media_type = "animation"
-
-        media_id = (
-            message.animation.file_id
-        )
+        media_id = message.animation.file_id
 
     elif message.audio:
 
         media_type = "audio"
-
-        media_id = (
-            message.audio.file_id
-        )
+        media_id = message.audio.file_id
 
     elif message.voice:
 
         media_type = "voice"
-
-        media_id = (
-            message.voice.file_id
-        )
+        media_id = message.voice.file_id
 
     else:
 
         return
 
+    # IMPORTANT:
+    # caption_html automatically preserves
+    # Telegram custom/Premium emoji entities.
+
     caption = (
-        message.caption or ""
+        message.caption_html
+        if message.caption
+        else ""
     )
 
     position = add_start_part(
-
         media_type=media_type,
-
         media_id=media_id,
-
         caption=caption
-
     )
 
     labels = {
 
-        "video":
-            "🎥 Video",
-
-        "photo":
-            "🖼 Photo",
-
-        "document":
-            "📁 File / Document",
-
-        "animation":
-            "🎞 GIF / Animation",
-
-        "audio":
-            "🎵 Audio",
-
-        "voice":
-            "🎤 Voice"
+        "video": "🎥 Video",
+        "photo": "🖼 Photo",
+        "document": "📁 File / Document",
+        "animation": "🎞 GIF / Animation",
+        "audio": "🎵 Audio",
+        "voice": "🎤 Voice"
 
     }
 
@@ -1805,12 +1467,10 @@ async def admin_media(
 
         f"✅ <b>Part #{position} saved</b> "
         f"({labels.get(media_type, media_type)}).\n\n"
-
         "Next Part bhejo, ya:\n"
         "<code>/done</code>",
 
         parse_mode=ParseMode.HTML
-
     )
 
 
@@ -1831,20 +1491,25 @@ async def admin_text(
     if not message:
         return
 
-    text = (
-        message.text or ""
-    )
-
     state = context.user_data.get(
         "state"
     )
-
 
     # =====================================================
     # ADD TEXT PART
     # =====================================================
 
     if state == "start_part_add":
+
+        # text_html preserves:
+        # - Premium/Custom Emoji
+        # - bold
+        # - italic
+        # - underline
+        # - links
+        # etc.
+
+        text = message.text_html or ""
 
         position = add_start_part(
             text=text
@@ -1854,16 +1519,13 @@ async def admin_text(
 
             f"✅ <b>Part #{position} saved</b> "
             "(text).\n\n"
-
             "Next Part bhejo, ya:\n"
             "<code>/done</code>",
 
             parse_mode=ParseMode.HTML
-
         )
 
         return
-
 
     # =====================================================
     # BUTTON NAME
@@ -1871,13 +1533,12 @@ async def admin_text(
 
     if state == "button_name":
 
+        text = message.text or ""
+
         if not text.strip():
 
             await message.reply_text(
-
-                "❌ Button name empty "
-                "nahi ho sakta."
-
+                "❌ Button name empty nahi ho sakta."
             )
 
             return
@@ -1888,78 +1549,19 @@ async def admin_text(
 
         context.user_data[
             "state"
-        ] = "button_emoji"
-
-        await message.reply_text(
-
-            "✨ <b>Premium Emoji ID bhejo</b>\n\n"
-
-            "Premium Emoji nahi chahiye "
-            "to <code>skip</code> bhejo.\n\n"
-
-            "Example:\n"
-            "<code>5368324170671202286</code>",
-
-            parse_mode=ParseMode.HTML
-
-        )
-
-        return
-
-
-    # =====================================================
-    # BUTTON EMOJI
-    # =====================================================
-
-    if state == "button_emoji":
-
-        emoji_id = text.strip()
-
-        if emoji_id.lower() == "skip":
-
-            context.user_data[
-                "button_emoji"
-            ] = None
-
-        else:
-
-            if not emoji_id.isdigit():
-
-                await message.reply_text(
-
-                    "❌ Invalid Premium Emoji ID.\n\n"
-
-                    "Numeric ID bhejo ya "
-                    "<code>skip</code> bhejo.",
-
-                    parse_mode=ParseMode.HTML
-
-                )
-
-                return
-
-            context.user_data[
-                "button_emoji"
-            ] = emoji_id
-
-        context.user_data[
-            "state"
         ] = "button_color"
 
         await message.reply_text(
 
             "🎨 <b>Button Color</b>\n\n"
-
             "🔵 <code>blue</code>\n"
             "🟢 <code>green</code>\n"
             "🔴 <code>red</code>",
 
             parse_mode=ParseMode.HTML
-
         )
 
         return
-
 
     # =====================================================
     # BUTTON COLOR
@@ -1967,27 +1569,21 @@ async def admin_text(
 
     if state == "button_color":
 
-        color = text.strip().lower()
+        color = (
+            (message.text or "")
+            .strip()
+            .lower()
+        )
 
         color_map = {
 
-            "blue":
-                "primary",
+            "blue": "primary",
+            "green": "success",
+            "red": "danger",
 
-            "green":
-                "success",
-
-            "red":
-                "danger",
-
-            "primary":
-                "primary",
-
-            "success":
-                "success",
-
-            "danger":
-                "danger"
+            "primary": "primary",
+            "success": "success",
+            "danger": "danger"
 
         }
 
@@ -1996,13 +1592,11 @@ async def admin_text(
             await message.reply_text(
 
                 "❌ Invalid color.\n\n"
-
                 "🔵 blue\n"
                 "🟢 green\n"
                 "🔴 red",
 
                 parse_mode=ParseMode.HTML
-
             )
 
             return
@@ -2018,16 +1612,13 @@ async def admin_text(
         await message.reply_text(
 
             "🔗 <b>Ab Button URL bhejo</b>\n\n"
-
             "Example:\n"
             "<code>https://example.com</code>",
 
             parse_mode=ParseMode.HTML
-
         )
 
         return
-
 
     # =====================================================
     # BUTTON URL
@@ -2035,20 +1626,20 @@ async def admin_text(
 
     if state == "button_url":
 
-        url = text.strip()
+        url = (
+            message.text or ""
+        ).strip()
 
         if not is_valid_url(url):
 
             await message.reply_text(
 
                 "❌ <b>Invalid URL</b>\n\n"
-
                 "URL <code>https://</code> "
                 "ya <code>http://</code> se "
                 "start hona chahiye.",
 
                 parse_mode=ParseMode.HTML
-
             )
 
             return
@@ -2065,12 +1656,6 @@ async def admin_text(
             )
         )
 
-        button_emoji = (
-            context.user_data.get(
-                "button_emoji"
-            )
-        )
-
         button_style = (
             context.user_data.get(
                 "button_style",
@@ -2080,8 +1665,7 @@ async def admin_text(
 
         if (
             not part_position
-            or
-            not button_name
+            or not button_name
         ):
 
             context.user_data.clear()
@@ -2094,78 +1678,47 @@ async def admin_text(
 
         add_part_button(
 
-            part_position=(
-                part_position
-            ),
+            part_position=part_position,
 
-            button_text=(
-                button_name
-            ),
+            button_text=button_name,
 
             button_url=url,
 
-            icon_custom_emoji_id=(
-                button_emoji
-            ),
+            icon_custom_emoji_id=None,
 
-            button_style=(
-                button_style
-            )
-
+            button_style=button_style
         )
 
         context.user_data.clear()
 
         color_names = {
 
-            "primary":
-                "🔵 Blue",
-
-            "success":
-                "🟢 Green",
-
-            "danger":
-                "🔴 Red"
+            "primary": "🔵 Blue",
+            "success": "🟢 Green",
+            "danger": "🔴 Red"
 
         }
 
-        color_label = (
-            color_names.get(
-                button_style,
-                button_style
-            )
-        )
-
-        emoji_label = (
-
-            "✨ Premium Emoji"
-
-            if button_emoji
-
-            else
-
-            "No Emoji"
-
+        color_label = color_names.get(
+            button_style,
+            button_style
         )
 
         await message.reply_text(
 
-            f"✅ <b>Button Added!</b>\n\n"
+            "✅ <b>Button Added!</b>\n\n"
 
             f"📦 Part: "
             f"<b>#{part_position}</b>\n"
 
             f"🔘 Button: "
-            f"<b>{button_name}</b>\n"
-
-            f"✨ Icon: "
-            f"<b>{emoji_label}</b>\n"
+            f"<b>{escape(button_name)}</b>\n"
 
             f"🎨 Color: "
             f"<b>{color_label}</b>\n"
 
             f"🔗 URL: "
-            f"<code>{url}</code>\n\n"
+            f"<code>{escape(url)}</code>\n\n"
 
             "Button Part ke niche "
             "alag row mein dikhega.",
@@ -2173,11 +1726,9 @@ async def admin_text(
             parse_mode=ParseMode.HTML,
 
             reply_markup=admin_panel()
-
         )
 
         return
-
 
     # =====================================================
     # BROADCAST
@@ -2210,23 +1761,19 @@ async def admin_text(
                     f"Broadcast error: {e}"
                 )
 
-            await asyncio.sleep(
-                0.05
-            )
+            await asyncio.sleep(0.05)
 
         context.user_data.clear()
 
         await message.reply_text(
 
             "📢 <b>Broadcast Finished</b>\n\n"
-
             f"✅ Sent: {sent}\n"
             f"❌ Failed: {failed}",
 
             parse_mode=ParseMode.HTML,
 
             reply_markup=admin_panel()
-
         )
 
         return
@@ -2249,10 +1796,7 @@ async def done_command(
     ) != "start_part_add":
 
         await update.message.reply_text(
-
-            "❌ Abhi Part adding mode "
-            "active nahi hai."
-
+            "❌ Abhi Part adding mode active nahi hai."
         )
 
         return
@@ -2264,9 +1808,7 @@ async def done_command(
     if total == 0:
 
         await update.message.reply_text(
-
             "❌ Koi Part save nahi hua."
-
         )
 
         return
@@ -2276,17 +1818,13 @@ async def done_command(
     await update.message.reply_text(
 
         "✅ <b>/start sequence saved!</b>\n\n"
-
-        f"📦 Total Parts: "
-        f"<b>{total}</b>\n\n"
-
+        f"📦 Total Parts: <b>{total}</b>\n\n"
         "Test karne ke liye "
         "<code>/start</code> bhejo.",
 
         parse_mode=ParseMode.HTML,
 
         reply_markup=admin_panel()
-
     )
 
 
@@ -2305,9 +1843,7 @@ async def cancel_command(
     if not context.user_data:
 
         await update.message.reply_text(
-
             "ℹ️ Koi active operation nahi hai."
-
         )
 
         return
@@ -2321,12 +1857,11 @@ async def cancel_command(
         parse_mode=ParseMode.HTML,
 
         reply_markup=admin_panel()
-
     )
 
 
 # =========================================================
-# PREMIUM EMOJI LEARNING
+# AUTOMATIC PREMIUM EMOJI CAPTURE
 # =========================================================
 
 async def learn_custom_emojis(
@@ -2334,24 +1869,15 @@ async def learn_custom_emojis(
     context
 ):
 
-    if not update.effective_user:
+    user = update.effective_user
+
+    if not user:
         return
 
-    if not is_admin(
-        update.effective_user.id
-    ):
+    if not is_admin(user.id):
         return
 
-    if get_setting(
-        "save_mode",
-        "0"
-    ) != "1":
-
-        return
-
-    message = (
-        update.effective_message
-    )
+    message = update.effective_message
 
     if not message:
         return
@@ -2359,106 +1885,104 @@ async def learn_custom_emojis(
     entities = []
 
     if message.entities:
-
         entities.extend(
             message.entities
         )
 
     if message.caption_entities:
-
         entities.extend(
             message.caption_entities
         )
 
-    found = []
+    if not entities:
+        return
+
+    learned = []
 
     for entity in entities:
 
         if entity.type != "custom_emoji":
-
             continue
 
-        emoji_id = (
-            entity.custom_emoji_id
-        )
+        emoji_id = entity.custom_emoji_id
 
         if not emoji_id:
-
             continue
 
-        if emoji_id in found:
-
+        if emoji_id in learned:
             continue
 
-        found.append(
+        learned.append(
             emoji_id
         )
 
-        before = len(
-            get_emojis()
+        # Try to get the actual visible fallback
+        # character from the original message.
+        fallback = "✨"
+
+        try:
+
+            if message.text:
+                fallback = message.parse_entity(
+                    entity
+                ) or "✨"
+
+            elif message.caption:
+                fallback = message.parse_caption_entity(
+                    entity
+                ) or "✨"
+
+        except Exception:
+            fallback = "✨"
+
+        before = db_one(
+            """
+            SELECT id
+            FROM emojis
+            WHERE emoji_id=?
+            """,
+            (emoji_id,)
         )
 
         save_emoji_id(
             emoji_id,
-            "✨"
+            fallback
         )
 
-        after = len(
-            get_emojis()
-        )
+        if before:
+            continue
 
-        if after > before:
+        # Automatically tell admin the ID.
+        # No tag is used.
+        try:
 
-            row = db_one(
+            await context.bot.send_message(
 
-                """
-                SELECT id
-                FROM emojis
-                WHERE emoji_id=?
-                """,
+                chat_id=ADMIN_ID,
 
-                (
-                    emoji_id,
-                )
+                text=(
 
+                    "✨ <b>Premium Emoji Saved!</b>\n\n"
+
+                    f"✨ Emoji: "
+                    f"{premium_emoji(emoji_id, fallback)}\n\n"
+
+                    f"🆔 Custom Emoji ID:\n"
+                    f"<code>{escape(str(emoji_id))}</code>\n\n"
+
+                    "✅ ID automatically database me "
+                    "save ho gaya."
+
+                ),
+
+                parse_mode=ParseMode.HTML
             )
 
-            if not row:
+        except Exception as e:
 
-                continue
-
-            tag_id = row["id"]
-
-            try:
-
-                await context.bot.send_message(
-
-                    chat_id=ADMIN_ID,
-
-                    text=(
-
-                        "✨ <b>Premium Emoji Learned!</b>\n\n"
-
-                        f"🆔 ID:\n"
-                        f"<code>{emoji_id}</code>\n\n"
-
-                        f"🏷️ Tag:\n"
-                        f"<code>{{emoji:{tag_id}}}</code>\n\n"
-
-                        "Is ID ko button mein bhi "
-                        "use kar sakte ho."
-
-                    ),
-
-                    parse_mode=ParseMode.HTML
-
-                )
-
-            except Exception as e:
-
-                print(
-                    f"Emoji notification error: {e}"
-                )
+            print(
+                f"Emoji notification error: {e}"
+            )
 
 
 # =========================================================
@@ -2478,31 +2002,23 @@ async def emojis_command(
     if not emojis:
 
         await update.message.reply_text(
-
             "📭 No saved custom emojis."
-
         )
 
         return
 
     lines = [
-        "✨ <b>Learned Premium Emojis</b>\n"
+        "✨ <b>Saved Premium Emojis</b>\n"
     ]
 
     for e in emojis:
 
         lines.append(
 
-            f"{premium_emoji("
-            f"e['emoji_id'],"
-            f"e['emoji']"
-            f")}\n"
+            f"{premium_emoji(e['emoji_id'], e['emoji'])}\n"
 
             f"🆔 ID: "
-            f"<code>{e['emoji_id']}</code>\n"
-
-            f"🏷️ Tag: "
-            f"<code>{{emoji:{e['id']}}}</code>\n"
+            f"<code>{escape(str(e['emoji_id']))}</code>\n"
 
         )
 
@@ -2511,7 +2027,6 @@ async def emojis_command(
         "\n".join(lines),
 
         parse_mode=ParseMode.HTML
-
     )
 
 
@@ -2534,7 +2049,6 @@ async def panel_command(
         parse_mode=ParseMode.HTML,
 
         reply_markup=admin_panel()
-
     )
 
 
@@ -2554,7 +2068,6 @@ async def id_command(
 
         f"Your Telegram ID: "
         f"{update.effective_user.id}"
-
     )
 
 
@@ -2564,10 +2077,7 @@ async def id_command(
 
 def main():
 
-    if (
-        BOT_TOKEN ==
-        "PASTE_BOT_TOKEN_HERE"
-    ):
+    if BOT_TOKEN == "PASTE_BOT_TOKEN_HERE":
 
         print(
             "❌ Please set BOT_TOKEN."
@@ -2581,7 +2091,6 @@ def main():
         .token(BOT_TOKEN)
         .build()
     )
-
 
     # =====================================================
     # COMMANDS
@@ -2629,7 +2138,6 @@ def main():
         )
     )
 
-
     # =====================================================
     # JOIN REQUEST
     # =====================================================
@@ -2639,7 +2147,6 @@ def main():
             join_request
         )
     )
-
 
     # =====================================================
     # CALLBACKS
@@ -2651,7 +2158,6 @@ def main():
         )
     )
 
-
     # =====================================================
     # MEDIA
     # =====================================================
@@ -2659,15 +2165,10 @@ def main():
     media_filter = (
 
         filters.VIDEO
-
         | filters.PHOTO
-
         | filters.Document.ALL
-
         | filters.ANIMATION
-
         | filters.AUDIO
-
         | filters.VOICE
 
     )
@@ -2680,9 +2181,7 @@ def main():
         ),
 
         group=0
-
     )
-
 
     # =====================================================
     # TEXT
@@ -2700,12 +2199,10 @@ def main():
         ),
 
         group=1
-
     )
 
-
     # =====================================================
-    # PREMIUM EMOJI LEARNING
+    # AUTOMATIC PREMIUM EMOJI CAPTURE
     # =====================================================
 
     app.add_handler(
@@ -2713,15 +2210,12 @@ def main():
         MessageHandler(
 
             filters.ALL,
-
             learn_custom_emojis
 
         ),
 
         group=2
-
     )
-
 
     # =====================================================
     # START BOT
@@ -2732,10 +2226,7 @@ def main():
     )
 
     app.run_polling(
-
-        allowed_updates=
-        Update.ALL_TYPES
-
+        allowed_updates=Update.ALL_TYPES
     )
 
 
@@ -2744,5 +2235,4 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
-
     main()
