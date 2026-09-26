@@ -458,12 +458,6 @@ def build_part_keyboard(
 
     keyboard = []
 
-    color_icons = {
-        "primary": "🔵",
-        "success": "🟢",
-        "danger": "🔴"
-    }
-
     for button in buttons:
 
         style = (
@@ -471,22 +465,28 @@ def build_part_keyboard(
             or "primary"
         )
 
-        icon = color_icons.get(
-            style,
-            "🔵"
-        )
+        icon_id = button["icon_custom_emoji_id"]
 
-        button_text = (
-            f"{icon} "
-            f"{button['button_text']}"
-        )
+        button_kwargs = {
+            "text": button["button_text"],
+            "url": button["button_url"],
+            "style": style,
+        }
 
+        if icon_id:
+            button_kwargs["icon_custom_emoji_id"] = icon_id
+
+        # Telegram Bot API 9.4 (Feb 9, 2026) added a real
+        # `style` field on InlineKeyboardButton: 'primary'
+        # (blue), 'success' (green), 'danger' (red), plus
+        # `icon_custom_emoji_id` for a small icon before the
+        # label. Icons only render if the bot owner has an
+        # active Telegram Premium subscription, or the bot
+        # purchased an extra username on Fragment. Older
+        # Telegram clients just show the plain button.
         keyboard.append([
 
-            InlineKeyboardButton(
-                text=button_text,
-                url=button["button_url"]
-            )
+            InlineKeyboardButton(**button_kwargs)
 
         ])
 
@@ -1218,6 +1218,7 @@ async def callbacks(
                         lines.append(
                             f"   {icon} "
                             f"🔘 "
+                            f"{premium_emoji(b['icon_custom_emoji_id']) if b['icon_custom_emoji_id'] else ''}"
                             f"{escape(b['button_text'])}"
                         )
 
@@ -1377,6 +1378,56 @@ async def callbacks(
 
 
 # =========================================================
+# BROADCAST (shared by text and media)
+# =========================================================
+
+async def run_broadcast(
+    message,
+    context
+):
+
+    users = db_all(
+        "SELECT user_id FROM users"
+    )
+
+    sent = 0
+    failed = 0
+
+    for user in users:
+
+        try:
+
+            await message.copy(
+                chat_id=user["user_id"]
+            )
+
+            sent += 1
+
+        except Exception as e:
+
+            failed += 1
+
+            print(
+                f"Broadcast error: {e}"
+            )
+
+        await asyncio.sleep(0.05)
+
+    context.user_data.clear()
+
+    await message.reply_text(
+
+        "📢 <b>Broadcast Finished</b>\n\n"
+        f"✅ Sent: {sent}\n"
+        f"❌ Failed: {failed}",
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=admin_panel()
+    )
+
+
+# =========================================================
 # ADMIN MEDIA
 # =========================================================
 
@@ -1388,9 +1439,27 @@ async def admin_media(
     if not admin_only(update):
         return
 
-    if context.user_data.get(
+    state = context.user_data.get(
         "state"
-    ) != "start_part_add":
+    )
+
+    # -----------------------------------------------------
+    # BROADCAST (photo / video / file / gif / audio / voice)
+    # -----------------------------------------------------
+
+    if state == "broadcast":
+
+        message = update.message
+
+        if message:
+            await run_broadcast(
+                message,
+                context
+            )
+
+        return
+
+    if state != "start_part_add":
 
         return
 
@@ -1607,6 +1676,125 @@ async def admin_text(
 
         context.user_data[
             "state"
+        ] = "button_icon"
+
+        emojis = get_emojis()
+
+        if emojis:
+
+            lines = [
+                "✨ <b>Button Icon (optional)</b>\n\n"
+                "Niche wala ek premium emoji bhej do "
+                "(icon ban jayega), ya list mein se "
+                "number bhej do:\n"
+            ]
+
+            for i, e in enumerate(emojis, 1):
+
+                lines.append(
+                    f"{i}. "
+                    f"{premium_emoji(e['emoji_id'], e['emoji'])}"
+                )
+
+            lines.append(
+                "\nIcon nahi chahiye to:\n"
+                "<code>/skip</code>"
+            )
+
+            await message.reply_text(
+                "\n".join(lines),
+                parse_mode=ParseMode.HTML
+            )
+
+        else:
+
+            await message.reply_text(
+
+                "✨ <b>Button Icon (optional)</b>\n\n"
+                "Koi premium emoji abhi tak saved "
+                "nahi hai, isliye direct koi premium "
+                "emoji bhej do (icon ban jayega), ya:\n"
+                "<code>/skip</code>",
+
+                parse_mode=ParseMode.HTML
+            )
+
+        return
+
+    # =====================================================
+    # BUTTON ICON (optional premium emoji)
+    # =====================================================
+
+    if state == "button_icon":
+
+        text = (message.text or "").strip()
+
+        icon_id = None
+
+        if text.lower() == "/skip":
+
+            icon_id = None
+
+        else:
+
+            entities = message.entities or []
+
+            custom_entity = next(
+                (
+                    e for e in entities
+                    if e.type == "custom_emoji"
+                ),
+                None
+            )
+
+            if custom_entity:
+
+                icon_id = (
+                    custom_entity.custom_emoji_id
+                )
+
+                save_emoji_id(icon_id, "✨")
+
+            elif text.isdigit():
+
+                emojis = get_emojis()
+
+                idx = int(text)
+
+                if 1 <= idx <= len(emojis):
+
+                    icon_id = emojis[
+                        idx - 1
+                    ]["emoji_id"]
+
+                else:
+
+                    await message.reply_text(
+                        "❌ Invalid number. Dobara try karo, "
+                        "ya /skip bhejo."
+                    )
+
+                    return
+
+            else:
+
+                await message.reply_text(
+
+                    "❌ Ye ek premium emoji nahi hai.\n\n"
+                    "Ya to premium emoji bhejo, ya list "
+                    "ka number, ya /skip bhejo.",
+
+                    parse_mode=ParseMode.HTML
+                )
+
+                return
+
+        context.user_data[
+            "button_icon"
+        ] = icon_id
+
+        context.user_data[
+            "state"
         ] = "button_url"
 
         await message.reply_text(
@@ -1663,6 +1851,12 @@ async def admin_text(
             )
         )
 
+        button_icon = (
+            context.user_data.get(
+                "button_icon"
+            )
+        )
+
         if (
             not part_position
             or not button_name
@@ -1684,7 +1878,7 @@ async def admin_text(
 
             button_url=url,
 
-            icon_custom_emoji_id=None,
+            icon_custom_emoji_id=button_icon,
 
             button_style=button_style
         )
@@ -1704,6 +1898,13 @@ async def admin_text(
             button_style
         )
 
+        icon_line = (
+            f"✨ Icon: "
+            f"{premium_emoji(button_icon)}\n"
+            if button_icon
+            else ""
+        )
+
         await message.reply_text(
 
             "✅ <b>Button Added!</b>\n\n"
@@ -1713,6 +1914,8 @@ async def admin_text(
 
             f"🔘 Button: "
             f"<b>{escape(button_name)}</b>\n"
+
+            f"{icon_line}"
 
             f"🎨 Color: "
             f"<b>{color_label}</b>\n"
@@ -1736,44 +1939,9 @@ async def admin_text(
 
     if state == "broadcast":
 
-        users = db_all(
-            "SELECT user_id FROM users"
-        )
-
-        sent = 0
-        failed = 0
-
-        for user in users:
-
-            try:
-
-                await message.copy(
-                    chat_id=user["user_id"]
-                )
-
-                sent += 1
-
-            except Exception as e:
-
-                failed += 1
-
-                print(
-                    f"Broadcast error: {e}"
-                )
-
-            await asyncio.sleep(0.05)
-
-        context.user_data.clear()
-
-        await message.reply_text(
-
-            "📢 <b>Broadcast Finished</b>\n\n"
-            f"✅ Sent: {sent}\n"
-            f"❌ Failed: {failed}",
-
-            parse_mode=ParseMode.HTML,
-
-            reply_markup=admin_panel()
+        await run_broadcast(
+            message,
+            context
         )
 
         return
